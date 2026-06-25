@@ -1,3 +1,22 @@
+# Lute (SiYuan fork — multi-ID block ref)
+
+Fork of [88250/lute](https://github.com/88250/lute) (v1.7.7-0.20260410094720-75c101d9a057) with **one change**:
+
+## Modification
+
+**`parse/block_ref.go` — `parseBlockRefID`**: supports multiple space-separated block IDs inside `((...))`.
+
+```markdown
+Before (single ID only):  ((20201105103725-dd01qas "text"))
+After  (multi-ID):        ((20201105103725-dd01qas 20201105103725-xxxxxxxx "text"))
+```
+
+The function now collects all consecutive valid block IDs (separated by whitespace) before the optional quoted anchor text. Each individual ID is validated via `ast.IsNodeIDPattern`. The joined IDs are returned as a space-separated string, which is stored in `TextMarkBlockRefID`.
+
+All other parsing and rendering behaviors remain unchanged — single-ID refs work exactly as before.
+
+---
+
 <p align = "center">
 <img alt="Lute" src="https://b3log.org/images/brand/lute-128.png">
 <br><br>
