@@ -105,23 +105,60 @@ func (context *Context) parseBlockRefID(tokens []byte) (passed, remains, id []by
 		return
 	}
 
-	var i int
+	var allIDs [][]byte
+	var pos int
 	var token byte
-	for ; i < length; i++ {
-		token = tokens[i]
-		if bytes.Contains(editor.CaretTokens, []byte{token}) {
-			continue
-		}
 
-		if lex.IsWhitespace(token) || ')' == token || !lex.IsASCIILetterNumHyphen(tokens[i]) {
+	for {
+		start := pos
+		for ; pos < length; pos++ {
+			token = tokens[pos]
+			if bytes.Contains(editor.CaretTokens, []byte{token}) {
+				continue
+			}
+			if lex.IsWhitespace(token) || ')' == token || !lex.IsASCIILetterNumHyphen(token) {
+				break
+			}
+		}
+		if start == pos {
 			break
 		}
+
+		candidate := tokens[start:pos]
+		if !ast.IsNodeIDPattern(string(candidate)) {
+			pos = start
+			break
+		}
+		allIDs = append(allIDs, candidate)
+
+		if pos >= length || !lex.IsWhitespace(tokens[pos]) {
+			break
+		}
+
+		afterWs := pos
+		for afterWs < length && lex.IsWhitespace(tokens[afterWs]) {
+			afterWs++
+		}
+		if afterWs >= length {
+			break
+		}
+		next := tokens[afterWs]
+		if next == ')' || next == '"' || next == '\'' {
+			break
+		}
+		pos = afterWs
 	}
-	remains = tokens[i:]
-	id = tokens[:i]
-	if 2 > len(remains) || !ast.IsNodeIDPattern(string(id)) {
+
+	if len(allIDs) == 0 {
 		return
 	}
+
+	id = bytes.Join(allIDs, []byte(" "))
+	remains = tokens[pos:]
+	if 2 > len(remains) {
+		return
+	}
+
 	passed = make([]byte, 0, 64)
 	passed = append(passed, id...)
 	if bytes.HasPrefix(remains, editor.CaretTokens) {
