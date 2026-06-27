@@ -964,6 +964,14 @@ func (r *ProtylePreviewRenderer) renderTableHead(node *ast.Node, entering bool) 
 }
 
 func (r *ProtylePreviewRenderer) renderTable(node *ast.Node, entering bool) ast.WalkStatus {
+	if r.needUseHTMLTable(node) {
+		if entering {
+			r.renderTableByHTML(node)
+			return ast.WalkSkipChildren
+		}
+		return ast.WalkContinue
+	}
+
 	if entering {
 		ials := parse.IAL2Map(node.KramdownIAL)
 		delete(ials, "id")

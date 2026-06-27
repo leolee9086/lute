@@ -420,6 +420,10 @@ type Options struct {
 	TextMark bool
 	// HTMLTag2TextMark 设置是否打开 HTML 某些标签解析为 TextMark 节点支持。
 	// 目前仅支持 <u>、<kbd>、<sub>、<sup>、<strong>/<b>、<em>/<i>、<s>/<del>/<strike> 和 <mark>。
+	//
+	// * h2m 时就算禁用行级语法，只要启用 HTMLTag2TextMark 则依然转换为 md 标记符，因为 h2m 不走 parse
+	// * 走 parse 时如果遇到 html 标签且 HTMLTag2TextMark 开启则转换为 TextMark 节点
+	// 所以最终以上两种情况都相当于启用行级语法渲染 Protyle DOM
 	HTMLTag2TextMark bool
 	// Spin 设置是否打开自旋解析支持，该选项仅用于 Spin 内部过程，设置时请注意使用场景。
 	//
@@ -436,13 +440,16 @@ type Options struct {
 	// ArbitraryTaskListItemMarker 设置是否打开"任务列表任意标记符"支持。
 	// 默认仅支持 [ ]、[x] 和 [X]，开启后支持 [/]、[>]、[-]、[!] 等任意标记符。
 	ArbitraryTaskListItemMarker bool
+	// EnsureListItemParagraph 为 true 时，空列表项下创建子列表前会补一个空段落，
+	// 避免出现列表项下直接挂列表的结构 https://github.com/siyuan-note/siyuan/issues/17890
+	EnsureListItemParagraph bool
 }
 
 // IsValidTaskListItemMarker 判断 marker 是否是合法的任务列表项标记符。
-// 当 ArbitraryTaskListItemMarker 开启时接受任意非 []" 字符，否则仅接受 ' '、'x' 和 'X'。
+// 当 ArbitraryTaskListItemMarker 开启时接受任意非 [] 字符，否则仅接受 ' '、'x' 和 'X'。
 func (options *Options) IsValidTaskListItemMarker(marker byte) bool {
 	return (' ' == marker || 'x' == marker || 'X' == marker) ||
-		(options.ArbitraryTaskListItemMarker && '[' != marker && ']' != marker && '"' != marker)
+		(options.ArbitraryTaskListItemMarker && '[' != marker && ']' != marker)
 }
 
 var EmojiLock = sync.Mutex{}

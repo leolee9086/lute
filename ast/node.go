@@ -483,17 +483,6 @@ func (n *Node) SortTextMarkDataTypes() {
 	n.TextMarkType = strings.Join(dataTypes, " ")
 }
 
-// ClearIALAttrs 用于删除 name、alias、memo 和 bookmark 以及所有 custom- 前缀属性。
-func (n *Node) ClearIALAttrs() {
-	tmp := n.KramdownIAL[:0]
-	for _, kv := range n.KramdownIAL {
-		if "name" != kv[0] && "alias" != kv[0] && "memo" != kv[0] && "bookmark" != kv[0] && !strings.HasPrefix(kv[0], "custom-") {
-			tmp = append(tmp, kv)
-		}
-	}
-	n.KramdownIAL = tmp
-}
-
 func (n *Node) RemoveIALAttr(name string) {
 	tmp := n.KramdownIAL[:0]
 	for _, kv := range n.KramdownIAL {
@@ -904,6 +893,18 @@ func (n *Node) List() (ret []*Node) {
 		return WalkContinue
 	})
 	return
+}
+
+// BlockIDs 返回 n 及其所有子节点中块级节点的 ID 列表。
+func (n *Node) BlockIDs() []string {
+	ret := make([]string, 0, 512)
+	Walk(n, func(n *Node, entering bool) WalkStatus {
+		if entering && n.IsBlock() && "" != n.ID {
+			ret = append(ret, n.ID)
+		}
+		return WalkContinue
+	})
+	return ret
 }
 
 // ParentIs 判断 n 的类型是否在指定的 nodeTypes 类型列表内。

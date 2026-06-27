@@ -472,7 +472,8 @@ func (r *ProtyleExportMdRenderer) renderMdMarker0(node *ast.Node, currentTextmar
 		}
 		href = r.EncodeLinkSpace(href)
 		if entering {
-			content := strings.ReplaceAll(node.TextMarkTextContent, "]", "\\]")
+			content := strings.ReplaceAll(node.TextMarkTextContent, "[", "\\[")
+			content = strings.ReplaceAll(content, "]", "\\]")
 			content = html.UnescapeHTMLStr(content)
 			ret += "[" + content + "](" + href
 			if "" != node.TextMarkATitle {
@@ -1206,12 +1207,7 @@ func (r *ProtyleExportMdRenderer) renderTableHead(node *ast.Node, entering bool)
 func (r *ProtyleExportMdRenderer) renderTable(node *ast.Node, entering bool) ast.WalkStatus {
 	if r.needUseHTMLTable(node) {
 		if entering {
-			subTree := &parse.Tree{}
-			subTree.Root = node
-			subTree.Context = r.Tree.Context
-			previewRenderer := NewProtylePreviewRenderer(subTree, r.Options, r.ParseOptions)
-			output := previewRenderer.Render()
-			r.Write(output)
+			r.renderTableByHTML(node)
 			return ast.WalkSkipChildren
 		}
 		return ast.WalkContinue
@@ -1354,6 +1350,7 @@ func (r *ProtyleExportMdRenderer) renderLinkText(node *ast.Node, entering bool) 
 			tokens = node.Tokens
 		}
 		altTextContent := util.BytesToStr(tokens)
+		altTextContent = strings.ReplaceAll(altTextContent, "[", "\\[")
 		altTextContent = strings.ReplaceAll(altTextContent, "]", "\\]")
 		r.WriteString(altTextContent)
 	}
@@ -1428,6 +1425,7 @@ func (r *ProtyleExportMdRenderer) renderImage(node *ast.Node, entering bool) ast
 		var attrs [][]string
 		if altText := node.ChildByType(ast.NodeLinkText); nil != altText {
 			altTextContent := util.BytesToStr(altText.Tokens)
+			altTextContent = strings.ReplaceAll(altTextContent, "[", "\\[")
 			altTextContent = strings.ReplaceAll(altTextContent, "]", "\\]")
 			attrs = append(attrs, []string{"alt", altTextContent})
 		}
@@ -1575,6 +1573,9 @@ func (r *ProtyleExportMdRenderer) renderText(node *ast.Node, entering bool) ast.
 		// When exporting inline code to Markdown, try to remove the trailing zero-width space https://github.com/siyuan-note/siyuan/issues/15854
 		for bytes.HasPrefix(node.Tokens, []byte(editor.Zwsp)) && "" == node.NextNodeText() {
 			node.Tokens = bytes.TrimPrefix(node.Tokens, []byte(editor.Zwsp))
+		}
+		if nil == node.Previous {
+			node.Tokens, _ = bytes.CutPrefix(node.Tokens, []byte(editor.Zwsp))
 		}
 		if 1 > len(node.Tokens) {
 			return ast.WalkContinue
