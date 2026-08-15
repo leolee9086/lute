@@ -12,6 +12,7 @@ package lute
 
 import (
 	"bytes"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -406,7 +407,7 @@ func (lute *Lute) adjustMath(n *html.Node) {
 		}
 	}
 
-	if strings.Contains(class, "language-math") {
+	if slices.Contains(strings.Fields(class), "language-math") {
 		if mathContent := util.DomAttrValue(n, "data-math"); "" != mathContent {
 			util.SetDomAttrValue(n, "data-tex", mathContent)
 			return
@@ -768,7 +769,7 @@ func (lute *Lute) adjustVditorDOMListItemInP(n *html.Node) {
 				continue
 			}
 
-			if atom.P != c.DataAtom && atom.Blockquote != c.DataAtom && atom.Ul != c.DataAtom && atom.Ol != c.DataAtom && atom.Div != c.DataAtom {
+			if atom.P != c.DataAtom && atom.Blockquote != c.DataAtom && atom.Ul != c.DataAtom && atom.Ol != c.DataAtom && atom.Div != c.DataAtom && atom.Table != c.DataAtom {
 				spans, nextBlock := lute.forwardNextBlock(c)
 				p := &html.Node{Type: html.ElementNode, Data: "p", DataAtom: atom.P}
 				c.InsertBefore(p)
@@ -849,7 +850,7 @@ func (lute *Lute) adjustVditorDOMCodeA(n *html.Node) {
 func (lute *Lute) forwardNextBlock(spanNode *html.Node) (spans []*html.Node, nextBlock *html.Node) {
 	for next := spanNode; nil != next; next = next.NextSibling {
 		switch next.DataAtom {
-		case atom.Ol, atom.Ul, atom.Div, atom.Blockquote:
+		case atom.Ol, atom.Ul, atom.Div, atom.Blockquote, atom.Table:
 			return
 		}
 		spans = append(spans, next)
@@ -1480,13 +1481,7 @@ func (lute *Lute) genASTByVditorDOM(n *html.Node, tree *parse.Tree) {
 			}
 			node.AppendChild(&ast.Node{Type: ast.NodeCloseBracket})
 			node.AppendChild(&ast.Node{Type: ast.NodeOpenParen})
-			src := util.DomAttrValue(n, "src")
-			if "" != lute.RenderOptions.LinkBase {
-				src = strings.ReplaceAll(src, lute.RenderOptions.LinkBase, "")
-			}
-			if "" != lute.RenderOptions.LinkPrefix {
-				src = strings.ReplaceAll(src, lute.RenderOptions.LinkPrefix, "")
-			}
+			src := lute.trimLinkPath(util.DomAttrValue(n, "src"))
 			node.AppendChild(&ast.Node{Type: ast.NodeLinkDest, Tokens: []byte(src)})
 			linkTitle := util.DomAttrValue(n, "title")
 			if "" != linkTitle {
@@ -1810,13 +1805,7 @@ func (lute *Lute) genASTByVditorDOM(n *html.Node, tree *parse.Tree) {
 	case atom.A:
 		node.AppendChild(&ast.Node{Type: ast.NodeCloseBracket})
 		node.AppendChild(&ast.Node{Type: ast.NodeOpenParen})
-		href := util.DomAttrValue(n, "href")
-		if "" != lute.RenderOptions.LinkBase {
-			href = strings.ReplaceAll(href, lute.RenderOptions.LinkBase, "")
-		}
-		if "" != lute.RenderOptions.LinkPrefix {
-			href = strings.ReplaceAll(href, lute.RenderOptions.LinkPrefix, "")
-		}
+		href := lute.trimLinkPath(util.DomAttrValue(n, "href"))
 		node.AppendChild(&ast.Node{Type: ast.NodeLinkDest, Tokens: []byte(href)})
 		linkTitle := util.DomAttrValue(n, "title")
 		if "" != linkTitle {

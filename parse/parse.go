@@ -335,6 +335,12 @@ type Tree struct {
 	Created int64    // 创建时间
 	Updated int64    // 更新时间
 	Hash    string   // 内容哈希
+
+	// 以下字段用于惰性构建链接引用定义和脚注定义索引，避免查找时遍历整棵语法树
+	linkRefDefs        []*linkRefDef // 链接引用定义索引
+	linkRefDefIndexed  bool          // 链接引用定义索引是否已构建
+	footnotesDefs      []*ast.Node   // 脚注定义索引（文档顺序）
+	footnotesDefsIndex bool          // 脚注定义索引是否已构建
 }
 
 // Options 描述了解析选项。
@@ -348,6 +354,8 @@ type Options struct {
 	// GFMStrikethrough1 设置是否打开“GFM 删除线”一个标记符 ~ 支持。
 	// GFM 删除线支持两个标记符 ~~，这个选项用于支持一个标记符的删除线。
 	GFMStrikethrough1 bool
+	// FullWidthStrikethrough 设置是否将两个全角波浪号作为删除线标记符支持。
+	FullWidthStrikethrough bool
 	// GFMAutoLink 设置是否打开“GFM 自动链接”支持。
 	GFMAutoLink bool
 	// Footnotes 设置是否打开“脚注”支持。

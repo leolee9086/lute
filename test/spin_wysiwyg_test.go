@@ -18,6 +18,10 @@ import (
 
 var spinVditorDOMTests = []*parseTest{
 
+	{"164", "<p data-block=\"0\">&lt;https://example.com/%E2%80%B8<wbr>&gt;</p>", "<p data-block=\"0\"><a href=\"https://example.com/%E2%80%B8\">https://example.com/<wbr></a><wbr></p>"},
+	{"163", "<p data-block=\"0\">&lt;mailto:foo@example.com<wbr>&gt;</p>", "<p data-block=\"0\"><a href=\"mailto:foo@example.com\">mailto:foo@example.com</a><wbr></p>"},
+	{"162", "<p data-block=\"0\">&lt;<wbr>https://example.com&gt;</p>", "<p data-block=\"0\"><a href=\"https://example.com\">https://example.com</a><wbr></p>"},
+	{"161", "<p data-block=\"0\">&lt;https://example.com<wbr>&gt;</p>", "<p data-block=\"0\"><a href=\"https://example.com\">https://example.com</a><wbr></p>"},
 	{"160", "<p data-block=\"0\"><sup data-marker=\"^\">foob<wbr></sup></p>", "<p data-block=\"0\"><sup data-marker=\"^\">foob<wbr></sup></p>"},
 	{"159", "<ul data-tight=\"true\" data-marker=\"*\" data-block=\"0\"><li data-marker=\"*\" class=\"vditor-task\"><input type=\"checkbox\"> foo</li><li data-marker=\"*\" class=\"vditor-task\">[ ] <wbr><br></li></ul>", "<ul data-tight=\"true\" data-marker=\"*\" data-block=\"0\"><li data-marker=\"*\" class=\"vditor-task\"><input type=\"checkbox\" data-task=\" \" /> foo</li><li data-marker=\"*\" class=\"vditor-task\"><input type=\"checkbox\" data-task=\" \" /> <wbr></li></ul>"},
 	{"158", "<form ><iframe/src=\"data:text/html,<script>alert('xss');</script>\"></iframe>", "<div class=\"vditor-wysiwyg__block\" data-type=\"html-block\" data-block=\"0\"><pre><code>&lt;form&gt;&lt;iframe src=&quot;data:text/html,&lt;script&gt;alert('xss');&lt;/script&gt;&quot;&gt;&lt;/iframe&gt;&lt;/form&gt;</code></pre><pre class=\"vditor-wysiwyg__preview\" data-render=\"2\"><form><iframe></iframe></form></pre></div>"},
@@ -198,6 +202,26 @@ func TestSpinVditorDOM(t *testing.T) {
 		html := luteEngine.SpinVditorDOM(test.from)
 		if test.to != html {
 			t.Fatalf("test case [%s] failed\nexpected\n\t%q\ngot\n\t%q\noriginal html\n\t%q", test.name, test.to, html, test.from)
+		}
+	}
+}
+
+func TestSpinVditorDOMTableInList(t *testing.T) {
+	luteEngine := lute.New()
+	luteEngine.SetVditorWYSIWYG(true)
+
+	tests := []*parseTest{
+		{"unordered", "<ul data-marker=\"*\" data-block=\"0\"><li data-marker=\"*\"><p data-block=\"0\">test</p><table data-block=\"0\"><thead><tr><th>col1</th></tr></thead><tbody><tr><td>12<wbr></td></tr></tbody></table></li></ul>", "<ul data-tight=\"true\" data-marker=\"*\" data-block=\"0\"><li data-marker=\"*\">test<table data-block=\"0\"><thead><tr><th>col1</th></tr></thead><tbody><tr><td>12<wbr></td></tr></tbody></table></li></ul>"},
+		{"ordered", "<ol data-marker=\"1.\" data-block=\"0\"><li data-marker=\"1.\"><p data-block=\"0\">test</p><table data-block=\"0\"><thead><tr><th>col1</th></tr></thead><tbody><tr><td>12<wbr></td></tr></tbody></table></li></ol>", "<ol data-tight=\"true\" data-marker=\"1.\" data-block=\"0\"><li data-marker=\"1.\">test<table data-block=\"0\"><thead><tr><th>col1</th></tr></thead><tbody><tr><td>12<wbr></td></tr></tbody></table></li></ol>"},
+	}
+	for _, test := range tests {
+		once := luteEngine.SpinVditorDOM(test.from)
+		if test.to != once {
+			t.Fatalf("test case [%s] failed after first spin\nexpected\n\t%q\ngot\n\t%q\noriginal html\n\t%q", test.name, test.to, once, test.from)
+		}
+		twice := luteEngine.SpinVditorDOM(once)
+		if test.to != twice {
+			t.Fatalf("test case [%s] failed after second spin\nexpected\n\t%q\ngot\n\t%q\noriginal html\n\t%q", test.name, test.to, twice, test.from)
 		}
 	}
 }

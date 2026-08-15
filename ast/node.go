@@ -13,6 +13,7 @@ package ast
 import (
 	"bytes"
 	"math/rand"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -122,15 +123,16 @@ type Node struct {
 
 	// 文本标记
 
-	TextMarkType                string `json:",omitempty"` // 文本标记类型
-	TextMarkAHref               string `json:",omitempty"` // 文本标记超链接 data-href 属性
-	TextMarkATitle              string `json:",omitempty"` // 文本标记超链接 data-title 属性
-	TextMarkInlineMathContent   string `json:",omitempty"` // 文本标记内联数学公式内容 data-content 属性
-	TextMarkInlineMemoContent   string `json:",omitempty"` // 文本标记内联备注内容 data-inline-memo-content 属性
-	TextMarkBlockRefID          string `json:",omitempty"` // 文本标记块引用 ID data-id 属性
-	TextMarkBlockRefSubtype     string `json:",omitempty"` // 文本标记块引用子类型（静态/动态锚文本） data-subtype 属性
-	TextMarkFileAnnotationRefID string `json:",omitempty"` // 文本标记文件注解引用 ID data-id 属性
-	TextMarkTextContent         string `json:",omitempty"` // 文本标记文本内容
+	TextMarkType                 string `json:",omitempty"` // 文本标记类型
+	TextMarkAHref                string `json:",omitempty"` // 文本标记超链接 data-href 属性
+	TextMarkATitle               string `json:",omitempty"` // 文本标记超链接 data-title 属性
+	TextMarkInlineMathContent    string `json:",omitempty"` // 文本标记内联数学公式内容 data-content 属性
+	TextMarkInlineMemoContent    string `json:",omitempty"` // 文本标记内联备注内容 data-inline-memo-content 属性
+	TextMarkBlockRefID           string `json:",omitempty"` // 文本标记块引用 ID data-id 属性
+	TextMarkBlockRefSubtype      string `json:",omitempty"` // 文本标记块引用子类型（静态/动态锚文本） data-subtype 属性
+	TextMarkFileAnnotationRefID  string `json:",omitempty"` // 文本标记文件注解引用 ID data-id 属性
+	TextMarkFlashcardOcclusionID string `json:",omitempty"` // 文本标记闪卡挖空 ID data-occlusion-id 属性
+	TextMarkTextContent          string `json:",omitempty"` // 文本标记文本内容
 
 	// 属性视图 https://github.com/siyuan-note/siyuan/issues/7535
 
@@ -145,7 +147,7 @@ type Node struct {
 	// 提示块 https://github.com/88250/lute/issues/203 > [!Type] Title
 	CalloutType     string `json:",omitempty"` // 提示块类型
 	CalloutTitle    string `json:",omitempty"` // 提示块标题
-	CalloutIcon     string `json:",omitempty"` // 提示块图标（从 Title 中第一个空格前面的部分进行解析）
+	CalloutIcon     string `json:",omitempty"` // 提示块图标
 	CalloutIconType int    `json:",omitempty"` // 提示块图标类型，0：Emoji Unicode，1：自定义图标
 }
 
@@ -192,7 +194,17 @@ const (
 	CalloutTypeImportant = "IMPORTANT"
 	CalloutTypeWarning   = "WARNING"
 	CalloutTypeCaution   = "CAUTION"
+	CalloutIconImageAlt  = "callout-icon"
 )
+
+// IsValidCalloutImageSrc 判断图片型提示块图标地址是否受支持。
+func IsValidCalloutImageSrc(src string) bool {
+	if strings.HasPrefix(src, "/emojis/") || strings.HasPrefix(src, "api/icon/") {
+		return true
+	}
+	u, err := url.Parse(src)
+	return nil == err && "" != u.Host && ("http" == strings.ToLower(u.Scheme) || "https" == strings.ToLower(u.Scheme))
+}
 
 func IsBuiltInCalloutType(typ string) bool {
 	switch typ {
@@ -442,6 +454,9 @@ func (n *Node) IsSameTextMarkType(node *Node) bool {
 	if "" == n.TextMarkType || "" == node.TextMarkType {
 		return false
 	}
+	if n.TextMarkFlashcardOcclusionID != node.TextMarkFlashcardOcclusionID {
+		return false
+	}
 
 	a := strings.Split(n.TextMarkType, " ")
 	b := strings.Split(node.TextMarkType, " ")
@@ -536,6 +551,13 @@ func (n *Node) IsEmptyBlockIAL() bool {
 		if NodeKramdownBlockIAL == n.Previous.Type {
 			return true
 		}
+		return false
+	}
+
+	// 空块 IAL 只可能直接挂在容器块（文档、列表、列表项、引述等）下。
+	// 若 IAL 挂在叶子块（段落、标题等）内部，它是该块的属性标记，而非空块占位
+	// https://github.com/siyuan-note/siyuan/issues/18169
+	if nil != n.Parent && !n.Parent.IsContainerBlock() {
 		return false
 	}
 	return true

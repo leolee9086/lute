@@ -11,6 +11,7 @@
 package test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/88250/lute"
@@ -18,6 +19,8 @@ import (
 
 var linkBaseTests = []parseTest{
 
+	{"7", "![foo](DATA:image/png;base64,AAAA)\n", "<p><img src=\"DATA:image/png;base64,AAAA\" alt=\"foo\" /></p>\n"},
+	{"6", "![foo](data:image/png;base64,AAAA)\n", "<p><img src=\"data:image/png;base64,AAAA\" alt=\"foo\" /></p>\n"},
 	{"5", "foo<a href=\"mailto:achuan-2@outlook.com\">achuan-2@outlook.com</a>bar\n", "<p>foo<a href=\"mailto:achuan-2@outlook.com\">achuan-2@outlook.com</a>bar</p>\n"},
 	{"4", "foo<span data-type=\"a\" data-href=\"mailto:d@b3log.org\">d@b3log.org</span>bar\n", "<p>foo<span data-type=\"a\" data-href=\"mailto:d@b3log.org\"><a href=\"mailto:d@b3log.org\">d@b3log.org</a></span>bar</p>\n"},
 	{"3", "[foo][^label]\n[^label]: bar\n", "<p><sup class=\"footnotes-ref\" id=\"footnotes-ref-1\"><a href=\"http://domain.com/path/#footnotes-def-1\">1</a></sup></p>\n<div class=\"footnotes-defs-div\"><hr class=\"footnotes-defs-hr\" />\n<ol class=\"footnotes-defs-ol\"><li id=\"footnotes-def-1\"><p>bar <a href=\"#footnotes-ref-1\" class=\"vditor-footnotes__goto-ref\">↩</a></p>\n</li>\n</ol></div>"},
@@ -39,6 +42,24 @@ func TestLinkBase(t *testing.T) {
 	}
 }
 
+func TestVditorLinkBaseDataImage(t *testing.T) {
+	luteEngine := lute.New()
+	luteEngine.SetVditorWYSIWYG(true)
+	luteEngine.SetLinkBase("http://domain.com/path/")
+
+	markdown := "![foo](data:image/png;base64,AAAA)"
+	expected := `src="data:image/png;base64,AAAA"`
+	tests := map[string]string{
+		"ir":      luteEngine.Md2VditorIRDOM(markdown),
+		"wysiwyg": luteEngine.Md2VditorDOM(markdown),
+	}
+	for name, dom := range tests {
+		if !strings.Contains(dom, expected) {
+			t.Fatalf("test case [%s] failed\nexpected to contain\n\t%q\ngot\n\t%q", name, expected, dom)
+		}
+	}
+}
+
 var linkBasePrefixTests = []parseTest{
 	{"0", "[foo](bar.png)\n", "<p><a href=\"prefix:http://domain.com/path/bar.png\">foo</a></p>\n"},
 }
@@ -53,5 +74,54 @@ func TestLinkBasePrefix(t *testing.T) {
 		if test.to != html {
 			t.Fatalf("test case [%s] failed\nexpected\n\t%q\ngot\n\t%q\noriginal markdown text\n\t%q", test.name, test.to, html, test.from)
 		}
+	}
+}
+
+func TestVditorLinkBaseRoundTrip(t *testing.T) {
+	tests := []struct {
+		name       string
+		linkBase   string
+		linkPrefix string
+		markdown   string
+	}{
+		{"windows-relative-path", "/configured/base", "", `![image.png](.\实现设计.assets\image.png)`},
+		{"relative-link", "/configured/base", "", `[foo](dir/foo.txt)`},
+		{"parent-relative-image", "/configured/base", "", `![foo](../images/foo.png)`},
+		{"trailing-slash", "/configured/base/", "", `![foo](./images/foo.png)`},
+		{"link-prefix", "/configured/base", "prefix:", `[foo](dir/foo.txt)`},
+		{"external-link-containing-base", "/configured/base", "", `[foo](https://example.com/configured/base/foo.txt)`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			luteEngine := lute.New()
+			luteEngine.SetVditorWYSIWYG(true)
+			luteEngine.SetLinkBase(test.linkBase)
+			luteEngine.SetLinkPrefix(test.linkPrefix)
+
+			irDOM := luteEngine.Md2VditorIRDOM(test.markdown)
+			markdown := luteEngine.VditorIRDOM2Md(irDOM)
+			wysiwygDOM := luteEngine.Md2VditorDOM(markdown)
+			result := luteEngine.VditorDOM2Md(wysiwygDOM)
+			expected := test.markdown + "\n"
+			if expected != result {
+				t.Fatalf("test case [%s] failed\nexpected\n\t%q\ngot\n\t%q", test.name, expected, result)
+			}
+		})
+	}
+}
+
+func TestProtyleLinkBaseRoundTrip(t *testing.T) {
+	luteEngine := lute.New()
+	luteEngine.SetProtyleWYSIWYG(true)
+	luteEngine.SetLinkBase("/configured/base")
+	luteEngine.SetLinkPrefix("prefix:")
+
+	markdown := `[foo](dir/foo.txt)`
+	blockDOM := luteEngine.Md2BlockDOM(markdown, false)
+	result := luteEngine.BlockDOM2StdMd(blockDOM)
+	expected := markdown + "\n"
+	if expected != result {
+		t.Fatalf("expected\n\t%q\ngot\n\t%q", expected, result)
 	}
 }

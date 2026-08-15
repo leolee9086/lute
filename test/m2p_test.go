@@ -19,6 +19,8 @@ import (
 
 var md2BlockDOMTests = []parseTest{
 
+	{"119", "#foo##bar#", "<div data-node-id=\"20060102150405-1a2b3c4\" data-node-index=\"1\" data-type=\"NodeParagraph\" class=\"p\" updated=\"20060102150405\"><div contenteditable=\"true\" spellcheck=\"false\">\u200b<span data-type=\"tag\">\u200bfoo</span>\u200b <span data-type=\"tag\">\u200bbar</span>\u200b</div><div class=\"protyle-attr\" contenteditable=\"false\">\u200b</div></div>"},
+	{"118", "1. \n2. ", "<div data-subtype=\"o\" data-node-id=\"20060102150405-1a2b3c4\" data-node-index=\"1\" data-type=\"NodeList\" class=\"list\" updated=\"20060102150405\"><div data-marker=\"1.\" data-subtype=\"o\" data-node-id=\"20060102150405-1a2b3c4\" data-type=\"NodeListItem\" class=\"li\" updated=\"20060102150405\"><div class=\"protyle-action protyle-action--order\" contenteditable=\"false\" draggable=\"true\">1.</div><div data-node-id=\"20060102150405-1a2b3c4\" data-type=\"NodeParagraph\" class=\"p\" updated=\"20060102150405\"><div contenteditable=\"true\" spellcheck=\"false\"></div><div class=\"protyle-attr\" contenteditable=\"false\">​</div></div><div class=\"protyle-attr\" contenteditable=\"false\">​</div></div><div data-marker=\"2.\" data-subtype=\"o\" data-node-id=\"20060102150405-1a2b3c4\" data-type=\"NodeListItem\" class=\"li\" updated=\"20060102150405\"><div class=\"protyle-action protyle-action--order\" contenteditable=\"false\" draggable=\"true\">2.</div><div data-node-id=\"20060102150405-1a2b3c4\" data-type=\"NodeParagraph\" class=\"p\" updated=\"20060102150405\"><div contenteditable=\"true\" spellcheck=\"false\"></div><div class=\"protyle-attr\" contenteditable=\"false\">​</div></div><div class=\"protyle-attr\" contenteditable=\"false\">​</div></div><div class=\"protyle-attr\" contenteditable=\"false\">​</div></div>"},
 	{"117", "[Click Me](javascript:alert('XSS'))", "<div data-node-id=\"20060102150405-1a2b3c4\" data-node-index=\"1\" data-type=\"NodeParagraph\" class=\"p\" updated=\"20060102150405\"><div contenteditable=\"true\" spellcheck=\"false\"><span data-type=\"a\" data-href=\"\">Click Me</span></div><div class=\"protyle-attr\" contenteditable=\"false\">\u200b</div></div>"},
 	{"116", "foo`1:abcd:2`bar", "<div data-node-id=\"20060102150405-1a2b3c4\" data-node-index=\"1\" data-type=\"NodeParagraph\" class=\"p\" updated=\"20060102150405\"><div contenteditable=\"true\" spellcheck=\"false\">foo <span data-type=\"code\">\u200b1:abcd:2</span>\u200b bar</div><div class=\"protyle-attr\" contenteditable=\"false\">\u200b</div></div>"},
 	{"115", "![](data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0icmVkIi8+PC9zdmc+)", "<div data-node-id=\"20060102150405-1a2b3c4\" data-node-index=\"1\" data-type=\"NodeParagraph\" class=\"p\" updated=\"20060102150405\"><div contenteditable=\"true\" spellcheck=\"false\">\u200b<span contenteditable=\"false\" data-type=\"img\" class=\"img\"><span> </span><span><span class=\"protyle-action protyle-icons\"><span class=\"protyle-icon protyle-icon--only\"><svg class=\"svg\"><use xlink:href=\"#iconMore\"></use></svg></span></span><img data-src=\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0icmVkIi8+PC9zdmc+\" loading=\"lazy\" /><span class=\"protyle-action__drag\"></span><span class=\"img__net\"><svg><use xlink:href=\"#iconLanguage\"></use></svg></span><span class=\"protyle-action__title\"><span></span></span></span><span> </span></span>\u200b</div><div class=\"protyle-attr\" contenteditable=\"false\">\u200b</div></div>"},
@@ -174,6 +176,29 @@ func TestMd2BlockDOM(t *testing.T) {
 	ast.Testing = false
 }
 
+func TestMd2BlockDOMTaskMarkerFollowedByLink(t *testing.T) {
+	luteEngine := lute.New()
+	luteEngine.SetProtyleWYSIWYG(true)
+	luteEngine.SetArbitraryTaskListItemMarker(true)
+
+	tests := []struct {
+		markdown string
+		listType int
+	}{
+		{"- [1](siyuan://blocks/20260802201342-8lzm8cy)", 0},
+		{"- [1]", 3},
+		{"- [x] task", 3},
+		{"- [/] task", 3},
+	}
+	for _, test := range tests {
+		_, tree := luteEngine.Md2BlockDOMTree(test.markdown, true)
+		list := tree.Root.FirstChild
+		if nil == list || nil == list.ListData || test.listType != list.ListData.Typ {
+			t.Fatalf("expected list type [%d] for markdown [%s]", test.listType, test.markdown)
+		}
+	}
+}
+
 var md2BlockDOMDisableSyntaxTests = []parseTest{
 
 	{"9", "这两个语素最开始<sup>[[1]](https://www.zhihu.com/question/2127166482#ref_1)</sup>都很拟声\\n", "<div data-node-id=\"20060102150405-1a2b3c4\" data-node-index=\"1\" data-type=\"NodeParagraph\" class=\"p\"><div contenteditable=\"true\" spellcheck=\"false\">这两个语素最开始<span data-type=\"sup a\" data-href=\"https://www.zhihu.com/question/2127166482#ref_1\">[1]</span>都很拟声\\n</div><div class=\"protyle-attr\" contenteditable=\"false\">\u200b</div></div>"},
@@ -208,6 +233,7 @@ func TestMd2BlockDOMDisableSyntax(t *testing.T) {
 
 var md2BlockDOMWithAutoLinkTests = []parseTest{
 
+	{"query", "http://192.168.3.2:6806?id=20260119151839-5zm8bjy", "<div data-node-id=\"20060102150405-1a2b3c4\" data-node-index=\"1\" data-type=\"NodeParagraph\" class=\"p\"><div contenteditable=\"true\" spellcheck=\"false\"><span data-type=\"a\" data-href=\"http://192.168.3.2:6806?id=20260119151839-5zm8bjy\">http://192.168.3.2:6806?id=20260119151839-5zm8bjy</span></div><div class=\"protyle-attr\" contenteditable=\"false\">\u200b</div></div>"},
 	{"decode", "测试 https://github.com/siyuan-note/bazaar/blob/main/README_zh_CN.md#%E6%8F%90%E4%BA%A4%E9%9B%86%E5%B8%82%E5%8C%85", "<div data-node-id=\"20060102150405-1a2b3c4\" data-node-index=\"1\" data-type=\"NodeParagraph\" class=\"p\"><div contenteditable=\"true\" spellcheck=\"false\">测试 <span data-type=\"a\" data-href=\"https://github.com/siyuan-note/bazaar/blob/main/README_zh_CN.md#%E6%8F%90%E4%BA%A4%E9%9B%86%E5%B8%82%E5%8C%85\">https://github.com/siyuan-note/bazaar/blob/main/README_zh_CN.md#提交集市包</span></div><div class=\"protyle-attr\" contenteditable=\"false\">\u200b</div></div>"},
 	{"basic", "foo https://b3log.org bar", "<div data-node-id=\"20060102150405-1a2b3c4\" data-node-index=\"1\" data-type=\"NodeParagraph\" class=\"p\"><div contenteditable=\"true\" spellcheck=\"false\">foo <span data-type=\"a\" data-href=\"https://b3log.org\">https://b3log.org</span> bar</div><div class=\"protyle-attr\" contenteditable=\"false\">\u200b</div></div>"},
 	{"inline-mixed", "https://b3log.org **bold** https://b3log.org", "<div data-node-id=\"20060102150405-1a2b3c4\" data-node-index=\"1\" data-type=\"NodeParagraph\" class=\"p\"><div contenteditable=\"true\" spellcheck=\"false\"><span data-type=\"a\" data-href=\"https://b3log.org\">https://b3log.org</span> <span data-type=\"strong\">bold</span> <span data-type=\"a\" data-href=\"https://b3log.org\">https://b3log.org</span></div><div class=\"protyle-attr\" contenteditable=\"false\">\u200b</div></div>"},

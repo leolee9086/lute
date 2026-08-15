@@ -318,11 +318,13 @@ func (r *BaseRenderer) renderTableByHTMLRow(row *ast.Node) {
 		r.Tag(tag, attrs, false)
 		// 遍历单元格子节点，由各渲染器的 RendererFuncs 处理行级元素
 		for c := cell.FirstChild; nil != c; c = c.Next {
-			rendererFunc := r.RendererFuncs[c.Type]
-			if nil != rendererFunc {
-				rendererFunc(c, true)
-				rendererFunc(c, false)
-			}
+			ast.Walk(c, func(n *ast.Node, entering bool) ast.WalkStatus {
+				rendererFunc := r.RendererFuncs[n.Type]
+				if nil == rendererFunc {
+					return ast.WalkContinue
+				}
+				return rendererFunc(n, entering)
+			})
 		}
 		r.Tag("/"+tag, nil, false)
 		r.Newline()
@@ -538,6 +540,15 @@ func HeadingID(heading *ast.Node) (ret string) {
 	return heading.HeadingNormalizedID
 }
 
+// HeadingIDRaw 返回标题 ID 语法花括号内的原始文本。
+func HeadingIDRaw(heading *ast.Node) (ret string) {
+	headingID := heading.ChildByType(ast.NodeHeadingID)
+	if nil != headingID {
+		ret = util.BytesToStr(headingID.Tokens)
+	}
+	return
+}
+
 func headingID0(heading *ast.Node) {
 	var root *ast.Node
 	for root = heading.Parent; ast.NodeDocument != root.Type; root = root.Parent {
@@ -570,14 +581,16 @@ func normalizeHeadingID(heading *ast.Node) (ret string) {
 
 	id = strings.TrimLeft(id, "#")
 	id = strings.ReplaceAll(id, editor.Caret, "")
+	buf := strings.Builder{}
+	buf.Grow(len(id))
 	for _, r := range id {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			ret += string(r)
+			buf.WriteRune(r)
 		} else {
-			ret += "-"
+			buf.WriteByte('-')
 		}
 	}
-	return
+	return buf.String()
 }
 
 type Heading struct {
@@ -717,7 +730,8 @@ func headingText(n *ast.Node) (ret string) {
 		}
 
 		switch n.Type {
-		case ast.NodeLinkText, ast.NodeBlockRefText, ast.NodeBlockRefDynamicText, ast.NodeFileAnnotationRefText:
+		case ast.NodeLinkText, ast.NodeBlockRefText, ast.NodeBlockRefDynamicText, ast.NodeFileAnnotationRefText,
+			ast.NodeBackslashContent:
 			buf.Write(n.Tokens)
 		case ast.NodeInlineMathContent:
 			buf.WriteString("<span class=\"language-math\">")

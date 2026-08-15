@@ -35,7 +35,9 @@ func (lute *Lute) SpinBlockDOM(ivHTML string) (ovHTML string) {
 		lute.ParseOptions.KeepEscaped = keepEscaped
 	}()
 
-	markdown := lute.blockDOM2Md(ivHTML)
+	blockDOMTree := lute.BlockDOM2Tree(ivHTML)
+	normalizeSpinCaretNewline(blockDOMTree)
+	markdown := lute.blockDOMTree2Md(blockDOMTree)
 	markdown = strings.ReplaceAll(markdown, editor.Zwsp, "")
 	tree := parse.Parse("", []byte(markdown), lute.ParseOptions)
 
@@ -85,6 +87,14 @@ func (lute *Lute) HTML2BlockDOM(sHTML string) (vHTML string) {
 func (lute *Lute) BlockDOM2HTML(vHTML string) (sHTML string) {
 	markdown := lute.blockDOM2Md(vHTML)
 	sHTML = lute.Md2HTML(markdown)
+	return
+}
+
+func (lute *Lute) BlockDOM2RichHTML(vHTML string) (sHTML string) {
+	tree := lute.BlockDOM2Tree(vHTML)
+	renderer := render.NewHtmlRenderer(tree, lute.RenderOptions, lute.ParseOptions)
+	renderer.SetTextMarkStandardTag()
+	sHTML = util.BytesToStr(renderer.Render())
 	return
 }
 
@@ -388,12 +398,15 @@ func (lute *Lute) MergeSameTextMark(n *ast.Node) {
 		mergeWithIAL = true
 	} else {
 		previewText := n.Previous.TokensStr()
-		if ast.NodeText == n.Previous.Type &&
-			!strings.Contains(previewText, "　") && !strings.Contains(previewText, " ") && !strings.Contains(previewText, "\n") && !strings.Contains(previewText, "\t") &&
-			"" == strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(previewText, editor.Zwsp, ""), editor.Caret, "")) &&
-			nil != n.Previous.Previous && n.IsSameTextMarkType(n.Previous.Previous) {
-			mergeWithZwsp = true
-		} else {
+			if ast.NodeText == n.Previous.Type &&
+				!strings.Contains(previewText, "　") && !strings.Contains(previewText, " ") && !strings.Contains(previewText, "\n") && !strings.Contains(previewText, "\t") &&
+				"" == strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(previewText, editor.Zwsp, ""), editor.Caret, "")) &&
+				nil != n.Previous.Previous && n.IsSameTextMarkType(n.Previous.Previous) {
+				// 相邻标签之间如果没有插入符（光标位置），则不跨 ZWSP 合并，保留为两个独立的标签 https://github.com/siyuan-note/siyuan/issues/18191
+				if !strings.Contains(n.TextMarkType, "tag") || strings.Contains(previewText, editor.Caret) {
+					mergeWithZwsp = true
+				}
+			} else {
 			if n.Type != n.Previous.Type || !n.IsSameTextMarkType(n.Previous) {
 				return
 			}
@@ -502,6 +515,47 @@ func (lute *Lute) CancelList(ivHTML string) (ovHTML string) {
 
 	ovHTML = lute.Tree2BlockDOM(tree, lute.RenderOptions, lute.ParseOptions)
 	return
+}
+
+func (lute *Lute) CancelListRecursively(ivHTML string) (ovHTML string) {
+	tree := lute.BlockDOM2Tree(ivHTML)
+	list := tree.Root.FirstChild
+	if nil == list || ast.NodeList != list.Type || nil == list.ListData {
+		return ivHTML
+	}
+
+	sourceTyp := list.ListData.Typ
+	var lists []*ast.Node
+	ast.Walk(list, func(n *ast.Node, entering bool) ast.WalkStatus {
+		if entering && ast.NodeList == n.Type && nil != n.ListData && sourceTyp == n.ListData.Typ {
+			lists = append(lists, n)
+		}
+		return ast.WalkContinue
+	})
+	for i := len(lists) - 1; 0 <= i; i-- {
+		cancelList(lists[i])
+	}
+
+	ovHTML = lute.Tree2BlockDOM(tree, lute.RenderOptions, lute.ParseOptions)
+	return
+}
+
+func cancelList(list *ast.Node) {
+	var children []*ast.Node
+	for li := list.FirstChild; nil != li; li = li.Next {
+		if ast.NodeListItem != li.Type {
+			continue
+		}
+		for child := li.FirstChild; nil != child; child = child.Next {
+			if ast.NodeTaskListItemMarker != child.Type {
+				children = append(children, child)
+			}
+		}
+	}
+	for _, child := range children {
+		list.InsertBefore(child)
+	}
+	list.Unlink()
 }
 
 func (lute *Lute) CancelBlockquote(ivHTML string) (ovHTML string) {
@@ -633,6 +687,70 @@ func (lute *Lute) Blocks2Hs(ivHTML, level string) (ovHTML string) {
 	}
 	ovHTML = lute.Tree2BlockDOM(tree, lute.RenderOptions, lute.ParseOptions)
 	return
+}
+
+func (lute *Lute) ConvertListType(ivHTML, targetType string) (ovHTML string) {
+	targetTyp := -1
+	switch targetType {
+	case "u":
+		targetTyp = 0
+	case "o":
+		targetTyp = 1
+	case "t":
+		targetTyp = 3
+	default:
+		return ivHTML
+	}
+
+	tree := lute.BlockDOM2Tree(ivHTML)
+	list := tree.Root.FirstChild
+	if nil == list || ast.NodeList != list.Type || nil == list.ListData {
+		return ivHTML
+	}
+
+	var lists []*ast.Node
+	ast.Walk(list, func(n *ast.Node, entering bool) ast.WalkStatus {
+		if entering && ast.NodeList == n.Type && nil != n.ListData && targetTyp != n.ListData.Typ {
+			lists = append(lists, n)
+		}
+		return ast.WalkContinue
+	})
+	if 0 == len(lists) {
+		return ivHTML
+	}
+	for _, item := range lists {
+		convertListType(item, targetTyp)
+	}
+
+	ovHTML = lute.Tree2BlockDOM(tree, lute.RenderOptions, lute.ParseOptions)
+	return
+}
+
+func convertListType(list *ast.Node, targetTyp int) {
+	list.ListData.Typ = targetTyp
+	num := 1
+	for li := list.FirstChild; nil != li; li = li.Next {
+		if ast.NodeListItem != li.Type {
+			continue
+		}
+		if nil == li.ListData {
+			li.ListData = &ast.ListData{}
+		}
+		li.ListData.Typ = targetTyp
+		if 1 == targetTyp {
+			li.ListData.Num = num
+			num++
+		}
+
+		taskMarker := li.ChildByType(ast.NodeTaskListItemMarker)
+		if 3 == targetTyp {
+			if nil == taskMarker {
+				li.PrependChild(&ast.Node{Type: ast.NodeTaskListItemMarker})
+			}
+		} else if nil != taskMarker {
+			taskMarker.Unlink()
+		}
+	}
 }
 
 func (lute *Lute) OL2TL(ivHTML string) (ovHTML string) {
@@ -856,6 +974,11 @@ func (lute *Lute) Blockquote2Callout(ivHTML string) (ovHTML string) {
 
 func (lute *Lute) blockDOM2Md(htmlStr string) (markdown string) {
 	tree := lute.BlockDOM2Tree(htmlStr)
+	markdown = lute.blockDOMTree2Md(tree)
+	return
+}
+
+func (lute *Lute) blockDOMTree2Md(tree *parse.Tree) (markdown string) {
 
 	// 将 AST 进行 Markdown 格式化渲染
 	options := render.NewOptions()
@@ -871,6 +994,61 @@ func (lute *Lute) blockDOM2Md(htmlStr string) (markdown string) {
 	formatted := renderer.Render()
 	markdown = string(formatted)
 	return
+}
+
+func normalizeSpinCaretNewline(tree *parse.Tree) {
+	// 浏览器在已有软换行处换行时会把插入符放在两条换行之间，需要先还原插入符对应的实际段落位置
+	ast.Walk(tree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {
+		if !entering || ast.NodeParagraph != n.Type {
+			return ast.WalkContinue
+		}
+
+		for child := n.FirstChild; nil != child; child = child.Next {
+			if ast.NodeText != child.Type {
+				continue
+			}
+
+			content := child.TokensStr()
+			if strings.HasPrefix(content, editor.Caret+"\n") && spinHasContentAfter(child, content, len(editor.Caret)+1) {
+				content = editor.Caret + content[len(editor.Caret)+1:]
+			}
+
+			for offset := 0; ; {
+				index := strings.Index(content[offset:], "\n"+editor.Caret+"\n")
+				if 0 > index {
+					break
+				}
+				index += offset
+				after := index + len("\n"+editor.Caret+"\n")
+				if spinHasContentAfter(child, content, after) {
+					content = content[:index] + "\n\n" + editor.Caret + content[after:]
+					offset = index + len("\n\n"+editor.Caret)
+				} else {
+					offset = after
+				}
+			}
+			child.Tokens = []byte(content)
+		}
+		return ast.WalkSkipChildren
+	})
+}
+
+func spinHasContentAfter(node *ast.Node, content string, offset int) bool {
+	if spinHasContent(content[offset:]) {
+		return true
+	}
+	for next := node.Next; nil != next; next = next.Next {
+		if spinHasContent(next.Text()) {
+			return true
+		}
+	}
+	return false
+}
+
+func spinHasContent(content string) bool {
+	content = strings.ReplaceAll(content, editor.Caret, "")
+	content = strings.ReplaceAll(content, editor.Zwsp, "")
+	return "" != strings.TrimSpace(content)
 }
 
 func (lute *Lute) genASTByBlockDOM(n *html.Node, tree *parse.Tree) {
@@ -1164,8 +1342,8 @@ func (lute *Lute) genASTByBlockDOM(n *html.Node, tree *parse.Tree) {
 		defer tree.Context.ParentTip()
 	case ast.NodeHTMLBlock:
 		node.Type = ast.NodeHTMLBlock
+		// DomAttrValue 已由 HTML 解析器完成属性解码，保留源码中的字面实体。
 		content := util.DomAttrValue(n.FirstChild.NextSibling.FirstChild, "data-content")
-		content = html.UnescapeHTMLStr(content)
 		node.Tokens = util.StrToBytes(content)
 		tree.Context.Tip.AppendChild(node)
 		return
@@ -2103,13 +2281,7 @@ func (lute *Lute) genASTContenteditable(n *html.Node, tree *parse.Tree) {
 		} else if "a" == dataType {
 			node.AppendChild(&ast.Node{Type: ast.NodeCloseBracket})
 			node.AppendChild(&ast.Node{Type: ast.NodeOpenParen})
-			href := util.DomAttrValue(n, "data-href")
-			if "" != lute.RenderOptions.LinkBase {
-				href = strings.ReplaceAll(href, lute.RenderOptions.LinkBase, "")
-			}
-			if "" != lute.RenderOptions.LinkPrefix {
-				href = strings.ReplaceAll(href, lute.RenderOptions.LinkPrefix, "")
-			}
+			href := lute.trimLinkPath(util.DomAttrValue(n, "data-href"))
 			node.AppendChild(&ast.Node{Type: ast.NodeLinkDest, Tokens: []byte(href)})
 			linkTitle := util.DomAttrValue(n, "data-title")
 			if "" != linkTitle {

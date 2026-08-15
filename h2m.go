@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"fmt"
 	"path"
+	"slices"
 	strconv "strconv"
 	"strings"
 	"unicode"
@@ -177,35 +178,10 @@ func (lute *Lute) fixOneTableStructure(table *html.Node) {
 		return
 	}
 
-	// 2.5 首行物理单元格补齐：如果首行物理单元格数 < maxCols，在首行末尾补 td。
-	// 否则 markdown 往返时表头分隔行列数 < maxCols，parse.Parse 重新解析会丢失数据列。
-	//（GFM 表格分隔行列数 = 表头物理单元格数，colspan 单元格只有1个物理格但占多列）
-	// 若首行存在 colspan>1 的单元格，补的 td 用 fn__none（被 colspan 覆盖，渲染时隐藏）；
-	// 否则是普通残缺表格，补普通空 td。
-	if 0 < len(trNodes) {
-		firstRowPhysicalCells := 0
-		firstRowHasColspan := false
-		for c := trNodes[0].FirstChild; c != nil; c = c.NextSibling {
-			if c.Type == html.ElementNode && (c.DataAtom == atom.Td || c.DataAtom == atom.Th) {
-				if "fn__none" == util.DomAttrValue(c, "class") {
-					continue
-				}
-				firstRowPhysicalCells++
-				if cs := util.DomAttrValue(c, "colspan"); "" != cs {
-					if val, err := strconv.Atoi(cs); err == nil && val > 1 {
-						firstRowHasColspan = true
-					}
-				}
-			}
-		}
-		for firstRowPhysicalCells < maxCols {
-			trNodes[0].AppendChild(newTD(firstRowHasColspan))
-			firstRowPhysicalCells++
-		}
-	}
-
 	// 3. 二维网格：occupied[row][col] 标记被跨行/跨列单元格覆盖的位置
 	// 用模拟 HTML 表格布局的方式补齐占位单元格
+	// 第 3 步统一处理所有行（含表头）：colspan 单元格后补 fn__none 占位、被 rowspan 覆盖处补占位、行末补齐，
+	// 使每行物理 td 数恰好等于 maxCols，从而 GFM 往返时各行 | 数一致，避免右侧列错位。
 	rowCount := len(trNodes)
 	occupied := make([][]bool, rowCount)
 	for i := range occupied {
@@ -252,6 +228,12 @@ func (lute *Lute) fixOneTableStructure(table *html.Node) {
 				for dc := 0; dc < colspan && colIdx+dc < maxCols; dc++ {
 					occupied[ri+dr][colIdx+dc] = true
 				}
+			}
+			// 单元格跨多列时，在其后补 (colspan-1) 个 fn__none 占位 td，使本行物理 td 数与逻辑列数一致。
+			// 否则 GFM 表格按 | 数对齐时该行会少列，导致 markdown 往返后右侧内容串列。
+			//（与思源内部规范一致：colspan 单元格后跟 fn__none 占位，见 spin_block_test 用例 112/113）
+			for dc := 1; dc < colspan && colIdx+dc <= maxCols; dc++ {
+				appendPlaceholderAfter(cell)
 			}
 			colIdx += colspan
 		}
@@ -310,6 +292,12 @@ func appendPlaceholder(tr *html.Node, fnNone bool) {
 	tr.AppendChild(newTD(fnNone))
 }
 
+// appendPlaceholderAfter 在 ref 之后插入一个 class="fn__none" 的空 td，用作 colspan 单元格横向覆盖的占位。
+func appendPlaceholderAfter(ref *html.Node) {
+	td := newPlaceholderTD()
+	ref.InsertAfter(td)
+}
+
 // newPlaceholderTD 构造一个 <td class="fn__none"></td> 节点（合并单元格覆盖占位）。
 func newPlaceholderTD() *html.Node {
 	return newTD(true)
@@ -364,6 +352,31 @@ func setTableCellSpanIAL(node *ast.Node, n *html.Node) {
 	node.PrependChild(ial)
 }
 
+// trimTableCellTextTokens 清理表格单元格文本边界，并保留相邻行级节点之间的一个空格。
+func trimTableCellTextTokens(n *html.Node, tokens []byte) []byte {
+	trimmed := bytes.TrimSpace(tokens)
+	if nil == n.Parent || (atom.Td != n.Parent.DataAtom && atom.Th != n.Parent.DataAtom) {
+		return trimmed
+	}
+	if 0 == len(trimmed) {
+		if nil != n.PrevSibling && nil != n.NextSibling &&
+			(strings.ContainsRune(n.Data, ' ') || strings.ContainsRune(n.Data, '\u00a0')) {
+			return []byte(" ")
+		}
+		return nil
+	}
+	runes := []rune(n.Data)
+	if nil != n.PrevSibling && atom.Br != n.PrevSibling.DataAtom && 0 < len(runes) &&
+		(' ' == runes[0] || '\u00a0' == runes[0]) {
+		trimmed = append([]byte(" "), trimmed...)
+	}
+	if nil != n.NextSibling && atom.Br != n.NextSibling.DataAtom && 0 < len(runes) &&
+		(' ' == runes[len(runes)-1] || '\u00a0' == runes[len(runes)-1]) {
+		trimmed = append(trimmed, ' ')
+	}
+	return trimmed
+}
+
 // genASTByDOM 根据指定的 DOM 节点 n 进行深度优先遍历并逐步生成 Markdown 语法树 tree。
 func (lute *Lute) genASTByDOM(n *html.Node, tree *parse.Tree) {
 	if html.CommentNode == n.Type || atom.Meta == n.DataAtom {
@@ -392,6 +405,10 @@ func (lute *Lute) genASTByDOM(n *html.Node, tree *parse.Tree) {
 
 	if strings.Contains(class, "citation-comment") {
 		// 忽略 Wikipedia 引用中的注释 https://github.com/siyuan-note/siyuan/issues/11640
+		return
+	}
+
+	if lute.genASTByCalloutDOM(n, tree) {
 		return
 	}
 
@@ -459,7 +476,7 @@ func (lute *Lute) genASTByDOM(n *html.Node, tree *parse.Tree) {
 				}
 			}
 
-			node.Tokens = bytes.TrimSpace(node.Tokens)
+			node.Tokens = trimTableCellTextTokens(n, node.Tokens)
 			node.Tokens = bytes.ReplaceAll(node.Tokens, []byte("\n"), []byte(" "))
 		}
 		node.Tokens = bytes.ReplaceAll(node.Tokens, []byte{194, 160}, []byte{' '}) // 将 &nbsp; 转换为空格
@@ -1096,26 +1113,8 @@ func (lute *Lute) genASTByDOM(n *html.Node, tree *parse.Tree) {
 		}
 		code = bytes.TrimSuffix(code, []byte("</code>"))
 
-		allSpan := true
-		if lute.parentIs(n, atom.Table) {
-			allSpan = false
-		} else {
-			for c := n.FirstChild; nil != c; c = c.NextSibling {
-				if html.TextNode == c.Type {
-					continue
-				}
-				if atom.Em == c.DataAtom || atom.Strong == c.DataAtom {
-					// https://github.com/siyuan-note/siyuan/issues/11682
-					continue
-				}
-				if atom.Span != c.DataAtom && atom.Br != c.DataAtom && atom.P != c.DataAtom {
-					allSpan = false
-					break
-				}
-			}
-		}
-		if allSpan {
-			// 如果全部都是 span 子节点，那么直接使用 span 的内容 https://github.com/siyuan-note/siyuan/issues/11281
+		if codeTextOnly(n) {
+			// 代码中的文本修饰元素仅影响 HTML 展示，转换时使用可见文本 https://github.com/siyuan-note/siyuan/issues/18505
 			code = []byte(util.DomText(n))
 			code = bytes.ReplaceAll(code, []byte("\u00A0"), []byte(" "))
 			code = bytes.ReplaceAll(code, []byte("\n"), []byte(" "))
@@ -1666,6 +1665,17 @@ func (lute *Lute) genASTByDOM(n *html.Node, tree *parse.Tree) {
 			}
 		}
 
+		if tex := strings.TrimSpace(util.DomAttrValue(n, "data-tex")); "" != tex &&
+			slices.Contains(strings.Fields(class), "language-math") {
+			if nil != util.DomChildByTypeAndClass(n, atom.Span, "katex-display") ||
+				nil != util.DomChildByTypeAndClass(n, atom.Span, "MathJax_SVG_Display") {
+				appendMathBlock(tree, tex)
+			} else {
+				appendInlineMath(tree, tex)
+			}
+			return
+		}
+
 		// The browser extension supports Zhihu formula https://github.com/siyuan-note/siyuan/issues/5599
 		if tex := strings.TrimSpace(util.DomAttrValue(n, "data-tex")); "" != tex {
 			if (strings.Contains(util.DomAttrValue(n, "class"), "math-inline") && ((nil != n.PrevSibling || nil != n.NextSibling) || lute.parentIs(n, atom.Table))) ||
@@ -1991,6 +2001,84 @@ func (lute *Lute) genASTByDOM(n *html.Node, tree *parse.Tree) {
 	case atom.Summary:
 		tree.Context.ParentTip()
 	}
+}
+
+func (lute *Lute) genASTByCalloutDOM(n *html.Node, tree *parse.Tree) bool {
+	if !lute.ParseOptions.Callout || atom.Div != n.DataAtom || !domClassContains(n, "callout") {
+		return false
+	}
+
+	typ := strings.TrimSpace(util.DomAttrValue(n, "data-subtype"))
+	if "" == typ || strings.ContainsAny(typ, "]\r\n") {
+		return false
+	}
+
+	info := directDomChildByClass(n, "callout-info")
+	content := directDomChildByClass(n, "callout-content")
+	if nil == info || nil == content {
+		return false
+	}
+
+	callout := &ast.Node{Type: ast.NodeCallout, CalloutType: typ}
+	if icon := directDomChildByClass(info, "callout-icon"); nil != icon {
+		images := util.DomChildrenByType(icon, atom.Img)
+		if 0 < len(images) {
+			if src := strings.TrimSpace(util.DomAttrValue(images[0], "src")); ast.IsValidCalloutImageSrc(src) {
+				callout.CalloutIcon = src
+				callout.CalloutIconType = 1
+			}
+		} else {
+			callout.CalloutIcon = strings.TrimSpace(util.DomText(icon))
+		}
+	}
+	if title := directDomChildByClass(info, "callout-title"); nil != title {
+		callout.CalloutTitle = strings.TrimSpace(lute.HTML2Md(string(util.DomHTML(title))))
+	}
+
+	tree.Context.Tip.AppendChild(callout)
+	tree.Context.Tip = callout
+	for child := content.FirstChild; nil != child; child = child.NextSibling {
+		lute.genASTByDOM(child, tree)
+	}
+	tree.Context.ParentTip()
+	return true
+}
+
+func directDomChildByClass(n *html.Node, class string) *html.Node {
+	for child := n.FirstChild; nil != child; child = child.NextSibling {
+		if domClassContains(child, class) {
+			return child
+		}
+	}
+	return nil
+}
+
+func domClassContains(n *html.Node, class string) bool {
+	return slices.Contains(strings.Fields(util.DomAttrValue(n, "class")), class)
+}
+
+func codeTextOnly(n *html.Node) bool {
+	for child := n.FirstChild; nil != child; child = child.NextSibling {
+		if html.TextNode == child.Type {
+			continue
+		}
+		if html.ElementNode != child.Type {
+			return false
+		}
+		if dataRender := util.DomAttrValue(child, "data-render"); "1" == dataRender || "2" == dataRender {
+			return false
+		}
+		switch child.DataAtom {
+		case atom.Abbr, atom.B, atom.Br, atom.Del, atom.Em, atom.I, atom.Kbd, atom.Mark, atom.P, atom.Q, atom.S,
+			atom.Samp, atom.Small, atom.Span, atom.Strike, atom.Strong, atom.Sub, atom.Sup, atom.Time, atom.U, atom.Var:
+		default:
+			return false
+		}
+		if !codeTextOnly(child) {
+			return false
+		}
+	}
+	return true
 }
 
 func appendInlineMath(tree *parse.Tree, tex string) {

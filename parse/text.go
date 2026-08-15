@@ -22,7 +22,8 @@ import (
 func (t *Tree) parseText(ctx *InlineContext) *ast.Node {
 	start := ctx.pos
 	for ; ctx.pos < ctx.tokensLen; ctx.pos++ {
-		if t.isMarker(ctx.tokens[ctx.pos]) {
+		if t.isMarker(ctx.tokens[ctx.pos]) || (t.Context.ParseOption.FullWidthStrikethrough &&
+			bytes.HasPrefix(ctx.tokens[ctx.pos:], fullWidthTilde)) {
 			// 遇到潜在的标记符时需要跳出该文本节点，回到行级解析主循环
 			break
 		}
@@ -142,17 +143,36 @@ func (t *Tree) mergeText(node *ast.Node) {
 	for child := node.FirstChild; nil != child; {
 		next := child.Next
 		if ast.NodeText == child.Type {
-			// 逐个合并后续兄弟节点
-			for nil != next && ast.NodeText == next.Type {
-				child.AppendTokens(next.Tokens)
-				next.Unlink()
-				next = child.Next
+			if nil != next && ast.NodeText == next.Type {
+				// 文本节点 Tokens 都是同一行级缓冲的子切片，不能原地 append 合并（会互相覆盖），
+				// 这里统计总长度后一次性分配合并结果
+				var total = len(child.Tokens)
+				for n := next; nil != n && ast.NodeText == n.Type; n = n.Next {
+					total += len(n.Tokens)
+				}
+				merged := make([]byte, 0, total)
+				merged = append(merged, child.Tokens...)
+				for nil != next && ast.NodeText == next.Type {
+					merged = append(merged, next.Tokens...)
+					next.Unlink()
+					next = child.Next
+				}
+				child.Tokens = merged
 			}
 		} else if ast.NodeLinkText == child.Type {
-			for nil != next && ast.NodeLinkText == next.Type {
-				child.AppendTokens(next.Tokens)
-				next.Unlink()
-				next = child.Next
+			if nil != next && ast.NodeLinkText == next.Type {
+				var total = len(child.Tokens)
+				for n := next; nil != n && ast.NodeLinkText == n.Type; n = n.Next {
+					total += len(n.Tokens)
+				}
+				merged := make([]byte, 0, total)
+				merged = append(merged, child.Tokens...)
+				for nil != next && ast.NodeLinkText == next.Type {
+					merged = append(merged, next.Tokens...)
+					next.Unlink()
+					next = child.Next
+				}
+				child.Tokens = merged
 			}
 		} else {
 			t.mergeText(child) // 递归处理子节点

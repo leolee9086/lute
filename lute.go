@@ -370,6 +370,10 @@ func (lute *Lute) SetGFMStrikethrough1(b bool) {
 	lute.ParseOptions.GFMStrikethrough1 = b
 }
 
+func (lute *Lute) SetFullWidthStrikethrough(b bool) {
+	lute.ParseOptions.FullWidthStrikethrough = b
+}
+
 func (lute *Lute) SetGFMAutoLink(b bool) {
 	lute.ParseOptions.GFMAutoLink = b
 }
@@ -470,6 +474,20 @@ func (lute *Lute) SetInlineMathAllowDigitAfterOpenMarker(b bool) {
 
 func (lute *Lute) SetLinkPrefix(linkPrefix string) {
 	lute.RenderOptions.LinkPrefix = linkPrefix
+}
+
+func (lute *Lute) trimLinkPath(path string) string {
+	if linkPrefix := lute.RenderOptions.LinkPrefix; "" != linkPrefix {
+		path = strings.TrimPrefix(path, linkPrefix)
+	}
+
+	if linkBase := lute.RenderOptions.LinkBase; "" != linkBase {
+		if !strings.HasSuffix(linkBase, "/") {
+			linkBase += "/"
+		}
+		path = strings.TrimPrefix(path, linkBase)
+	}
+	return path
 }
 
 func (lute *Lute) SetLinkBase(linkBase string) {

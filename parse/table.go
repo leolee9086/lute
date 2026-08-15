@@ -12,10 +12,28 @@ package parse
 
 import (
 	"bytes"
+	"strings"
 
 	"github.com/88250/lute/ast"
 	"github.com/88250/lute/lex"
 )
+
+// isTableCellIAL 判断 IAL 是否包含需要随表格单元格往返保留的结构或样式属性。
+func isTableCellIAL(ial [][]string) bool {
+	for _, attr := range ial {
+		switch attr[0] {
+		case "colspan", "rowspan", "style":
+			return true
+		case "class":
+			for _, class := range strings.Fields(attr[1]) {
+				if "fn__none" == class {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
 
 func (context *Context) parseTable(paragraph *ast.Node) (retParagraph, retTable *ast.Node) {
 	var tokens []byte
@@ -23,6 +41,11 @@ func (context *Context) parseTable(paragraph *ast.Node) (retParagraph, retTable 
 	lineCnt := 0
 	for i := 0; i < length; i++ {
 		if context.ParseOption.ProtyleWYSIWYG {
+			if -1 == bytes.IndexByte(paragraph.Tokens, lex.ItemPipe) {
+				// Protyle 模式下列中没有管道符的行都归入段落，所以没有管道符时不可能解析出表格
+				return
+			}
+
 			lines := lex.Split(paragraph.Tokens, lex.ItemNewline)
 
 			// 没有 | 的行依旧归入段落中
@@ -60,8 +83,7 @@ func (context *Context) parseTable(paragraph *ast.Node) (retParagraph, retTable 
 					subTokens := th.Tokens[ialStart:]
 					if pos, ial := context.parseKramdownSpanIAL(subTokens); 0 < len(ial) {
 						ialTokens := subTokens[:pos+1]
-						if bytes.Contains(ialTokens, []byte("span")) || bytes.Contains(ialTokens, []byte("fn__none")) || // 合并单元格
-							bytes.Contains(ialTokens, []byte("width:")) /* width: 是为了兼容遗留数据 */ {
+						if isTableCellIAL(ial) {
 							th.KramdownIAL = ial
 							th.Tokens = th.Tokens[len(ialTokens):]
 							spanIAL := &ast.Node{Type: ast.NodeKramdownSpanIAL, Tokens: ialTokens}
@@ -81,23 +103,22 @@ func (context *Context) parseTable(paragraph *ast.Node) (retParagraph, retTable 
 				if nil == tableRow {
 					return
 				}
-				if context.ParseOption.KramdownSpanIAL {
-					for td := tableRow.FirstChild; nil != td; td = td.Next {
-						ialStart := bytes.Index(td.Tokens, []byte("{:"))
-						if 0 != ialStart {
-							continue
-						}
+				// 提取数据行单元格的结构和样式 IAL（与表头行处理保持一致，不受 KramdownSpanIAL 选项控制），
+				// 使合并信息和单元格样式能随 Markdown 往返保留。
+				for td := tableRow.FirstChild; nil != td; td = td.Next {
+					ialStart := bytes.Index(td.Tokens, []byte("{:"))
+					if 0 != ialStart {
+						continue
+					}
 
-						subTokens := td.Tokens[ialStart:]
-						if pos, ial := context.parseKramdownSpanIAL(subTokens); 0 < len(ial) {
-							ialTokens := subTokens[:pos+1]
-							if bytes.Contains(ialTokens, []byte("span")) || bytes.Contains(ialTokens, []byte("fn__none")) || // 合并单元格
-								bytes.Contains(ialTokens, []byte("width:")) /* width: 是为了兼容遗留数据 */ {
-								td.KramdownIAL = ial
-								td.Tokens = td.Tokens[len(ialTokens):]
-								spanIAL := &ast.Node{Type: ast.NodeKramdownSpanIAL, Tokens: ialTokens}
-								td.PrependChild(spanIAL)
-							}
+					subTokens := td.Tokens[ialStart:]
+					if pos, ial := context.parseKramdownSpanIAL(subTokens); 0 < len(ial) {
+						ialTokens := subTokens[:pos+1]
+						if isTableCellIAL(ial) {
+							td.KramdownIAL = ial
+							td.Tokens = td.Tokens[len(ialTokens):]
+							spanIAL := &ast.Node{Type: ast.NodeKramdownSpanIAL, Tokens: ialTokens}
+							td.PrependChild(spanIAL)
 						}
 					}
 				}
@@ -131,6 +152,12 @@ func (context *Context) parseTable(paragraph *ast.Node) (retParagraph, retTable 
 }
 
 func (context *Context) parseTable0(tokens []byte) (ret *ast.Node) {
+	if -1 == bytes.IndexByte(tokens, lex.ItemPipe) && !noPipeSingleColTable(tokens) {
+		// 绝大多数段落中没有管道符，直接跳过切分以提升性能；
+		// 唯一例外是 foo\n---\nbar 形式的多行单列无管道表格
+		return
+	}
+
 	lines := lex.Split(tokens, lex.ItemNewline)
 	length := len(lines)
 	if 2 > length {
@@ -160,16 +187,18 @@ func (context *Context) parseTable0(tokens []byte) (ret *ast.Node) {
 		return
 	}
 
-	if context.ParseOption.KramdownSpanIAL {
-		for th := headRow.FirstChild; nil != th; th = th.Next {
-			ialStart := bytes.LastIndex(th.Tokens, []byte("{:"))
-			if 0 > ialStart {
-				continue
-			}
-			subTokens := th.Tokens[ialStart:]
-			if pos, ial := context.parseKramdownSpanIAL(subTokens); 0 < len(ial) {
+	// 提取表头单元格的结构和样式 IAL，不受 KramdownSpanIAL 选项控制，
+	// 使合并信息和单元格样式能随 Markdown 往返保留。
+	for th := headRow.FirstChild; nil != th; th = th.Next {
+		ialStart := bytes.LastIndex(th.Tokens, []byte("{:"))
+		if 0 > ialStart {
+			continue
+		}
+		subTokens := th.Tokens[ialStart:]
+		if pos, ial := context.parseKramdownSpanIAL(subTokens); 0 < len(ial) {
+			ialTokens := subTokens[:pos+1]
+			if isTableCellIAL(ial) {
 				th.KramdownIAL = ial
-				ialTokens := subTokens[:pos+1]
 				th.Tokens = th.Tokens[:len(th.Tokens)-len(ialTokens)]
 				spanIAL := &ast.Node{Type: ast.NodeKramdownSpanIAL, Tokens: ialTokens}
 				th.InsertAfter(spanIAL)
@@ -187,16 +216,17 @@ func (context *Context) parseTable0(tokens []byte) (ret *ast.Node) {
 		if nil == tableRow {
 			return
 		}
-		if context.ParseOption.KramdownSpanIAL {
-			for th := tableRow.FirstChild; nil != th; th = th.Next {
-				ialStart := bytes.LastIndex(th.Tokens, []byte("{:"))
-				if 0 > ialStart {
-					continue
-				}
-				subTokens := th.Tokens[ialStart:]
-				if pos, ial := context.parseKramdownSpanIAL(subTokens); 0 < len(ial) {
+		// 提取数据行单元格的结构和样式 IAL（同表头），不受 KramdownSpanIAL 选项控制。
+		for th := tableRow.FirstChild; nil != th; th = th.Next {
+			ialStart := bytes.LastIndex(th.Tokens, []byte("{:"))
+			if 0 > ialStart {
+				continue
+			}
+			subTokens := th.Tokens[ialStart:]
+			if pos, ial := context.parseKramdownSpanIAL(subTokens); 0 < len(ial) {
+				ialTokens := subTokens[:pos+1]
+				if isTableCellIAL(ial) {
 					th.KramdownIAL = ial
-					ialTokens := subTokens[:pos+1]
 					th.Tokens = th.Tokens[:len(th.Tokens)-len(ialTokens)]
 					spanIAL := &ast.Node{Type: ast.NodeKramdownSpanIAL, Tokens: ialTokens}
 					th.InsertAfter(spanIAL)
@@ -235,6 +265,38 @@ func inInline(tokens []byte, i int, mathOrCodeMarker byte) bool {
 	}
 	end := bytes.IndexByte(tokens[i+1:], mathOrCodeMarker)
 	return -1 < start && -1 < end
+}
+
+// noPipeSingleColTable 判断 tokens 是否可能是单列无管道表格（foo\n---\nbar、0\n-: 或 foo\n::\nbar 形式）。
+// 该函数是解析前的粗略预判，允许误判（误判时走原有的完整解析逻辑），但不能漏判完整解析器能接受的输入。
+func noPipeSingleColTable(tokens []byte) bool {
+	i0 := bytes.IndexByte(tokens, lex.ItemNewline) // 第一行结束位置
+	if 1 > i0 || lex.IsBlank(tokens[:i0]) {
+		return false
+	}
+
+	i1 := bytes.IndexByte(tokens[i0+1:], lex.ItemNewline) // 第二行结束位置
+	if 1 > i1 {
+		// 第二行没有换行结尾时取剩余全部内容
+		i1 = len(tokens) - i0 - 1
+	}
+	if 1 > i1 {
+		return false
+	}
+
+	// 与完整解析器一致：分隔行先做首尾空白裁剪，长度至少 2，且只能由 - : 和空格组成
+	delim := lex.TrimWhitespace(tokens[i0+1 : i0+1+i1])
+	if 2 > len(delim) {
+		return false
+	}
+	for _, c := range delim {
+		switch c {
+		case lex.ItemHyphen, lex.ItemColon, lex.ItemSpace:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (context *Context) parseTableRow(line []byte, aligns []int, isHead bool) (ret *ast.Node) {

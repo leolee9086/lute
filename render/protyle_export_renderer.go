@@ -172,7 +172,7 @@ func (r *ProtyleExportRenderer) renderCallout(node *ast.Node, entering bool) ast
 	if entering {
 		attrs := [][]string{
 			{"contenteditable", "false"},
-			{"data-subtype", node.CalloutType},
+			{"data-subtype", html.EscapeHTMLStr(node.CalloutType)},
 		}
 		r.blockNodeAttrs(node, &attrs, "callout")
 		r.Tag("div", attrs, false)
@@ -181,7 +181,7 @@ func (r *ProtyleExportRenderer) renderCallout(node *ast.Node, entering bool) ast
 			r.WriteString(node.CalloutIcon)
 		} else if 1 == node.CalloutIconType {
 			r.WriteString("<img class=\"callout-img\" src=\"")
-			r.WriteString(node.CalloutIcon)
+			r.WriteString(html.EscapeHTMLStr(node.CalloutIcon))
 			r.WriteString("\" />")
 		}
 
@@ -1206,7 +1206,21 @@ func (r *ProtyleExportRenderer) renderTable(node *ast.Node, entering bool) ast.W
 			subTree.Context = r.Tree.Context
 			defBlock := r.Tree.Root.ChildByType(ast.NodeFootnotesDefBlock)
 			if nil != defBlock {
-				subTree.Root.AppendChild(defBlock)
+				// 使用仅含标签的脚注定义桩保持查找顺序，避免移动真实定义块破坏原语法树。
+				stubDefBlock := &ast.Node{Type: ast.NodeFootnotesDefBlock}
+				for def := defBlock.FirstChild; nil != def; def = def.Next {
+					if ast.NodeFootnotesDef != def.Type {
+						continue
+					}
+					stubDefBlock.AppendChild(&ast.Node{
+						Type:              ast.NodeFootnotesDef,
+						Tokens:            append([]byte(nil), def.Tokens...),
+						FootnotesRefId:    def.FootnotesRefId,
+						FootnotesRefLabel: append([]byte(nil), def.FootnotesRefLabel...),
+					})
+				}
+				subTree.Root.AppendChild(stubDefBlock)
+				defer stubDefBlock.Unlink()
 			}
 			previewRenderer := NewProtylePreviewRenderer(subTree, r.Options, r.ParseOptions)
 			output := previewRenderer.Render()
@@ -1215,9 +1229,6 @@ func (r *ProtyleExportRenderer) renderTable(node *ast.Node, entering bool) ast.W
 				output = append(output, []byte("</tbody>\n</table>")...)
 			}
 			r.Write(output)
-			if nil != defBlock {
-				r.Tree.Root.AppendChild(defBlock)
-			}
 			return ast.WalkSkipChildren
 		}
 

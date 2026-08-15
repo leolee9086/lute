@@ -102,6 +102,7 @@ func NewVditorSVRenderer(tree *parse.Tree, options *Options, parseOptions *parse
 	ret.RendererFuncs[ast.NodeStrongU8eCloseMarker] = ret.renderStrongU8eCloseMarker
 	ret.RendererFuncs[ast.NodeBlockquote] = ret.renderBlockquote
 	ret.RendererFuncs[ast.NodeBlockquoteMarker] = ret.renderBlockquoteMarker
+	ret.RendererFuncs[ast.NodeCallout] = ret.renderCallout
 	ret.RendererFuncs[ast.NodeHeading] = ret.renderHeading
 	ret.RendererFuncs[ast.NodeHeadingC8hMarker] = ret.renderHeadingC8hMarker
 	ret.RendererFuncs[ast.NodeHeadingID] = ret.renderHeadingID
@@ -911,6 +912,7 @@ func (r *VditorSVRenderer) renderText(node *ast.Node, entering bool) ast.WalkSta
 		if r.Options.FixTermTypo {
 			tokens = r.FixTermTypo(tokens)
 		}
+		tokens = escapeSetextHeadingMarkersInListParagraph(node, tokens)
 
 		r.Tag("span", [][]string{{"data-type", "text"}}, false)
 		tokens = bytes.TrimRight(tokens, "\n")
@@ -1094,6 +1096,42 @@ func (r *VditorSVRenderer) renderBlockquoteMarker(node *ast.Node, entering bool)
 	return ast.WalkContinue
 }
 
+func (r *VditorSVRenderer) renderCallout(node *ast.Node, entering bool) ast.WalkStatus {
+	if entering {
+		r.Writer = &bytes.Buffer{}
+		r.nodeWriterStack = append(r.nodeWriterStack, r.Writer)
+		r.Tag("span", [][]string{{"data-type", "text"}, {"class", "vditor-sv__marker--callout"}}, false)
+		r.WriteString("[!" + html.EscapeHTMLStr(node.CalloutType) + "]")
+		if title := calloutEditableInfo(node); "" != title {
+			r.WriteByte(lex.ItemSpace)
+			r.Write(html.EscapeHTML([]byte(title)))
+		}
+		r.Tag("/span", nil, false)
+		r.Newline()
+	} else {
+		writer := r.nodeWriterStack[len(r.nodeWriterStack)-1]
+		r.nodeWriterStack = r.nodeWriterStack[:len(r.nodeWriterStack)-1]
+
+		buf := writer.Bytes()
+		marker := []byte("<span data-type=\"blockquote-marker\" class=\"vditor-sv__marker\">&gt; </span>")
+		buf = append(marker, buf...)
+		for bytes.HasSuffix(buf, NewlineSV) {
+			buf = bytes.TrimSuffix(buf, NewlineSV)
+		}
+		buf = bytes.ReplaceAll(buf, NewlineSV, append(NewlineSV, marker...))
+		writer.Reset()
+		writer.Write(buf)
+		r.nodeWriterStack[len(r.nodeWriterStack)-1].Write(writer.Bytes())
+		r.Writer = r.nodeWriterStack[len(r.nodeWriterStack)-1]
+		buf = r.Writer.Bytes()
+		r.Writer.Reset()
+		r.Write(buf)
+		r.Newline()
+		r.Write(NewlineSV)
+	}
+	return ast.WalkContinue
+}
+
 func (r *VditorSVRenderer) renderHeading(node *ast.Node, entering bool) ast.WalkStatus {
 	if entering {
 		r.Writer = &bytes.Buffer{}
@@ -1256,7 +1294,7 @@ func (r *VditorSVRenderer) renderTaskListItemMarker(node *ast.Node, entering boo
 func (r *VditorSVRenderer) renderThematicBreak(node *ast.Node, entering bool) ast.WalkStatus {
 	if entering {
 		r.Tag("span", [][]string{{"class", "vditor-sv__marker"}}, false)
-		r.WriteString("---")
+		r.WriteString("***")
 		r.Tag("/span", nil, false)
 		r.Newline()
 		r.Write(NewlineSV)
